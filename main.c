@@ -200,6 +200,10 @@ int main(void) {
         EndDrawing();
     }
 
+    free(infected_count);
+    free(immune_count);
+    free(msg);
+
     CloseWindow();
     return 0;
 }
