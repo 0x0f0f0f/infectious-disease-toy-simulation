@@ -2,165 +2,264 @@
 #include <raylib.h>
 #include <time.h>
 #include <math.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <errno.h>
+#include <getopt.h>
 
 #define RAND_RANGE(min, max) \
-    (rand() % (max + 1 - min)) + min
+    (random() % (max + 1 - min)) + min
 
 #define RAND_FLOAT (float)rand()/RAND_MAX
+#define RAND_SIGN (RAND_RANGE(0, 1) == 0 ? -1 : 1)
 
-#define INFECTED PURPLE
+#define CLEANUP(fp) if(ofp) fclose(fp);
 
-#define A b[i]
-#define B b[j]
+#define BACKGROUND 0x1C1B19FF
 
-typedef struct __ball {
+typedef enum {
+    DEAD = 0xEF2F27FF,
+    RECOVERED = 0x519F50FF,
+    INFECTED = 0x2C78BFFF,
+    SUSCEPTIBLE = 0xFCE8C3FF
+} state_t;
+
+typedef struct __cell {
     Vector2 pos;
     Vector2 vel;
-    Color c;
-    long long int infected;
-    long long int immune;
-    int alive;
-} ball;
+    state_t state;
+    /* Frame of infection */
+    long int infection_time;
+    /* Radius */
+    int r;
+    /* boolean variable if cell is alive */
+    bool alive;
+    /* Is quarantined */
+    bool quarantined;
+} cell_t;
 
-int main(void) {
+cell_t random_cell(cell_t a) {
+    a.r = 3;
+    a.pos = (Vector2) {
+        RAND_RANGE(a.r, GetScreenWidth() - a.r),
+        RAND_RANGE(a.r, GetScreenHeight() - a.r)
+    };
+    a.vel = (Vector2){ RAND_RANGE(1,3), RAND_RANGE(1, 3) };
+    a.state = SUSCEPTIBLE;
+    a.alive = true;
+    a.infection_time = 0;
+    return a;
+}
+
+typedef struct __options {
     /* Max simulation time in seconds */
-    const int maxtime = 40;
-    const int fps = 60;
-    const int screen_w = 1280;
-    const int screen_h = 720;
+    int maxtime;
+    /* Frames per second */
+    int fps;
+    /* Screen width and height */
+    int screen_w;
+    int screen_h;
+    /* Total population */
+    int population;
+    /* number of quarantined people */
+    int total_quarantined;
     /* Probability of infecting another individual */
-    const double infectivity = 0.57;
+    double infectivity;
     /* Probability of death */
-    const double mortality = 0.1;
+    double mortality;
     /* Healing time in frames */
-    const double healing_time = 4 * fps;
-    /* 1/n people that are not staying home */
-    const int people_count = 800;
-    const int not_staying_home = 4;
-    const int graph_height = 128;
-    const int br = 2;
+    double healing_time;
     /* How many frames per sample */
-    const int sampling_rate = 5;
-    const int graph_width = (maxtime * fps) / sampling_rate;
-    const int graph_max_width = screen_w - (graph_height * 3 );
+    int sampling_rate;
+    /* Maximum Speed */
+    float max_speed;
+    /* Output filename */
+    char* output_filename;
+} options_t;
+
+const options_t default_options = {
+    40,         /* maxtime */
+    60,         /* FPS */
+    1280,       /* screen_w */
+    720,        /* screen_h */
+    300,        /* population */
+    300/4,      /* quarantined */
+    0.57,       /* infectivity */
+    0.1,        /* mortality */
+    5*60,       /* healing_time */
+    5,          /* sampling_rate */
+    5.0,          /* max_speed */
+    "output.csv"
+};
+
+void print_usage(const char* name) {
+    fprintf(stderr, "Usage: %s -t MAXTIME -f FPS -w WIDTH -h HEIGHT\n"
+        "\t-p POPULATION -q QUARANTINED -i INFECTIVITY\n"
+        "\t-m MORTALITY -a HEALING_TIME -s SAMPLERATE\n"
+        "\t-z MAXSPEED", name);
+    exit(EXIT_FAILURE);
+}
+
+options_t get_options(int argc, char* const argv[]) {
+    options_t o = default_options;
+    int c;
+    while ((c = getopt (argc, argv, "t:f:w:h:p:q:i:m:h:s:o:")) != -1)
+    switch (c) {
+        case 't': o.maxtime = atoi(optarg); break;
+        case 'f': o.fps = atoi(optarg); break;
+        case 'w': o.screen_w = atoi(optarg); break;
+        case 'h': o.screen_h = atoi(optarg); break;
+        case 'p': o.population = atoi(optarg); break;
+        case 'q': o.total_quarantined = atoi(optarg); break;
+        case 'i': o.infectivity = atof(optarg); break;
+        case 'm': o.mortality = atof(optarg); break;
+        case 'z': o.max_speed = atof(optarg); break;
+        case 'a': o.healing_time = atoi(optarg); break;
+        case 's': o.sampling_rate = atoi(optarg); break;
+        case 'o': o.output_filename = optarg; break;
+        default:
+            print_usage(argv[0]);
+    }
+    return o;
+}
+
+/* Open CSV file */
+FILE* open_csv(const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if(fp == NULL) {
+        fprintf(stderr, "Error opening file %s: %s\n", filename, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    return fp;
+}
 
 
-    int i = 0, j = 0, paused = 0, bar_infected_height, bar_immune_height, bar_dead_height, bar_width;
+int main(int argc, char* const argv[]) {
+    options_t o = get_options(argc, argv);
+
+    int i = 0, j = 0, paused = 0, first_infected = 0;
+    int infected_count = 0, recovered_count = 0, dead_count = 0;
     long long int fc = 0;
-    long int graph_instant;
-    ball *b = malloc(sizeof(ball) * people_count);
+    long int graph_instant = 0;
+    double elapsed_time = 0.0, elapsed_pause_time = 0.0;
+    cell_t *b = malloc(sizeof(cell_t) * o.population);
     char *msg = malloc(2048);
 
-    int *infected_count = calloc(graph_width, sizeof(int));
-    int *immune_count = calloc(graph_width, sizeof(int));
-    int *dead_count = calloc(graph_width, sizeof(int));
-
-
     /* Init random number generator */
-    srand(time(NULL));
+    srandom(time(NULL));
 
     /* Init the window */
-    InitWindow(screen_w, screen_h, "demo");
-    SetTargetFPS(fps);
+    InitWindow(o.screen_w, o.screen_h, "demo");
+    SetTargetFPS(o.fps);
 
-    /* Init the scene */
-    fc = 0;
-    graph_instant = 0;
-    for (i = 0; i < people_count; i++) {
-        A.pos = (Vector2) {
-            RAND_RANGE(br, GetScreenWidth() - br),
-            RAND_RANGE(br, GetScreenHeight() - br - graph_height)
-        };
-        if (i % not_staying_home == 0)
-            A.vel = (Vector2){ RAND_RANGE(1,3), RAND_RANGE(1, 3) };
-        else A.vel = (Vector2) {0, 0};
-        A.c = GRAY;
-        A.immune = 0;
-        A.infected = 0;
-        A.alive = true;
+    /* Quarantine some cells */
+    for (i = 0; i < o.population; i++) {
+        b[i] = random_cell(b[i]);
+        if(j < o.total_quarantined) {
+            b[i].quarantined = true;
+            j++;
+        }
     }
 
-    /* A single random ball is infected */
-    int first_infected = RAND_RANGE(0, people_count - 1);
-    first_infected = first_infected - (first_infected % not_staying_home);
-    b[first_infected].infected = 1;
-    b[first_infected].c = INFECTED;
+    for(int i = 0; i < 4; i++) {
+        int j = i;
+        /* single random cell is infected */
+        while(b[i].quarantined || b[i].state == INFECTED) i++;
+        b[i].state = INFECTED;
+        b[i].infection_time = 1;
+        infected_count++;
+    }
+
+    /* Init output file */
+    FILE* ofp = open_csv(o.output_filename);
+    fprintf(ofp, "Time, Susceptible, Infected, Recovered, Dead\n");
 
     /* SIMULATION LOOP */
     while(!WindowShouldClose()) {
-        if(fc >= maxtime*fps) paused = true;
+        if(fc >= o.maxtime*o.fps) paused = true;
 
         // Custom pause
-        if (IsKeyPressed(' ') && fc <= maxtime * fps) {
+        if (IsKeyPressed(' ') && fc <= o.maxtime * o.fps) {
             paused = !paused;
         }
 
+        /* Update time and CSV if not paused */
         if(!paused) {
             fc++;
-            graph_instant = fc/sampling_rate;
-            dead_count[graph_instant] = 0;
-            immune_count[graph_instant] = 0;
-            infected_count[graph_instant] = 0;
+            elapsed_time = GetTime() - elapsed_pause_time;
+            if(graph_instant != fc/o.sampling_rate) {
+                graph_instant = fc/o.sampling_rate;
+                fprintf(ofp, "%ld,%d,%d,%d,%d\n", graph_instant, (o.population - infected_count - recovered_count - dead_count), infected_count, recovered_count, dead_count);
+                fflush(ofp);
+            }
+        } else {
+            elapsed_pause_time = GetTime() - elapsed_time;
         }
 
         /* Updating Loop */
-        for (i = 0; i < people_count && !paused; i++) {
-            /* Update infected stats */
-            if(!A.alive) {
-                dead_count[graph_instant]++;
-                A.vel.x = 0; A.vel.y = 0;
-            }
-            if(A.alive && A.immune) immune_count[graph_instant]++;
-            if(!A.immune && A.infected) infected_count[graph_instant]++;
+        for (i = 0; i < o.population && !paused; i++) {
 
             /* Heal or die */
-            if (A.alive && A.immune == 0 && A.infected > 0 && fc - A.infected >= healing_time) {
-                if(RAND_FLOAT < mortality) {
-                    A.alive = false;
-                    A.immune = fc;
-                    A.c = RED;
+            if (b[i].alive && b[i].state == INFECTED && fc - b[i].infection_time >= o.healing_time) {
+                if(RAND_FLOAT < o.mortality) {
+                    b[i].alive = false;
+                    b[i].state = DEAD;
+                    dead_count++;
+                    infected_count--;
                 } else {
-                    A.immune = fc;
-                    A.infected = 0;
-                    A.c = GREEN;
+                    b[i].state = RECOVERED;
+                    infected_count--;
+                    recovered_count++;
                 }
             }
 
             /* Update position */
-            A.pos.x += A.vel.x;
-            A.pos.y += A.vel.y;
-
-            /* Random drifting  */
-            if (A.alive && fc % 4 == 0 && A.vel.x != A.vel.y != 0) {
+            if(!b[i].quarantined && b[i].alive) {
+                b[i].pos.x += b[i].vel.x;
+                b[i].pos.y += b[i].vel.y;
+                /* Random drifting */
                 float drift = RAND_FLOAT * 0.4 * (RAND_FLOAT < 0.5 ? 1 : -1);
-                A.vel.x += drift;
-                A.vel.y -= drift;
+                b[i].vel.x += drift * RAND_SIGN;
+                b[i].vel.y += drift * RAND_SIGN;
+                if (b[i].vel.x > o.max_speed) b[i].vel.x = o.max_speed;
+                if (b[i].vel.x < -o.max_speed) b[i].vel.x = -o.max_speed;
+                if (b[i].vel.y > o.max_speed) b[i].vel.y = o.max_speed;
+                if (b[i].vel.y < -o.max_speed) b[i].vel.y = -o.max_speed;
+
             }
 
-            /* Bounce off the screen bounds */
-            if((A.pos.x >= (GetScreenWidth() - br)) || (b[i].pos.x <= br))
-                A.vel.x *= -1;
-            if((A.pos.y >= (GetScreenHeight() - br - graph_height)) || (b[i].pos.y <= br))
-                A.vel.y *= -1;
 
-            for(j = i; j < people_count; j++) {
+            /* Wrap off the screen bounds */
+            if((b[i].pos.x >= (GetScreenWidth() + b[i].r)) || (b[i].pos.x <= -b[i].r))
+                b[i].pos.x = GetScreenWidth() - b[i].pos.x;
+            if((b[i].pos.y >= (GetScreenHeight() + b[i].r)) || (b[i].pos.y <= -b[i].r))
+                b[i].pos.y = GetScreenHeight() - b[i].pos.y;
+
+
+            for(j = i; j < o.population; j++) {
                 if(j == i) continue;
-                if (CheckCollisionCircles(A.pos, br, B.pos, br)) {
-                    A.vel.x *= -1; A.vel.y *= -1;
-                    B.vel.x *= -1; B.vel.y *= -1;
+                if (CheckCollisionCircles(b[i].pos, b[i].r, b[j].pos, b[i].r)) {
+                    b[i].vel.x *= -1; b[i].vel.y *= -1;
+                    b[j].vel.x *= -1; b[j].vel.y *= -1;
 
                     /* Infect */
-                    if (A.alive && B.alive
-                        && (A.infected > 0 || B.infected > 0)
-                        && A.immune == 0
-                        && B.immune == 0
-                        && RAND_FLOAT < infectivity) {
-                        b[j].infected = fc;
-                        b[j].c = INFECTED;
-                        b[i].infected = fc;
-                        b[i].c = INFECTED;
+                    if ((b[i].alive == b[j].alive) == true) {
+                        if (b[i].state == INFECTED && b[j].state == SUSCEPTIBLE) {
+                            if(RAND_FLOAT < o.infectivity) {
+                                b[j].infection_time = fc;
+                                b[j].state = INFECTED;
+                                infected_count++;
+                            }
+                        } else if (b[j].state == INFECTED && b[i].state == SUSCEPTIBLE) {
+                            if(RAND_FLOAT < o.infectivity) {
+                                b[i].infection_time = fc;
+                                b[i].state = INFECTED;
+                                infected_count++;
+                            }
+                        }
                     }
                 }
             }
@@ -168,41 +267,28 @@ int main(void) {
 
         /* Drawing Loop */
         BeginDrawing();
-            ClearBackground((Color){0,0,0,255});
-            for (i = 0; i < people_count; i++) {
-                DrawCircle(b[i].pos.x, b[i].pos.y, br, b[i].c);
+            ClearBackground(GetColor(BACKGROUND));
+            for (i = 0; i < o.population; i++) {
+                DrawCircle(b[i].pos.x, b[i].pos.y, b[i].r, GetColor(b[i].state));
             }
 
-            sprintf(msg, "Total balls: %d    Death chance: %f\nInfected: %d    Infection chance: %f\nRecovered: %d    Dead: %d\nRemaining time: %.2fs\nElapsed time: %.2fs    1/%d of people are moving",
-                people_count, mortality,
-                infected_count[graph_instant], infectivity,
-                immune_count[graph_instant],
-                dead_count[graph_instant],
-                maxtime - (float)fc/fps, (float)fc/fps, not_staying_home);
+            sprintf(msg, "Total cells: %d    Death chance: %f    FPS: %d\n"
+            "Infected: %d    Infection chance: %f\n"
+            "Recovered: %d    Dead: %d\n"
+            "Remaining time: %.2fs\n"
+            "Elapsed time: %.2fs    %d quarantined",
+                o.population, o.mortality, o.fps,
+                infected_count, o.infectivity,
+                recovered_count,
+                dead_count,
+                o.maxtime - elapsed_time, elapsed_time, o.total_quarantined);
 
-            DrawText(msg,
-                graph_max_width + 5,
-                GetScreenHeight() - graph_height,
-                14,
-                WHITE);
-
-            for(i = 0; i < graph_instant && i < graph_width; i++) {
-                bar_width = graph_max_width/graph_instant;
-                bar_dead_height = (dead_count[i] * graph_height) / people_count;
-                bar_immune_height = (immune_count[i] * graph_height) / people_count;
-                bar_infected_height = (infected_count[i] * graph_height) / people_count;
-                DrawRectangle(bar_width * i, GetScreenHeight() - graph_height, bar_width, graph_height, GRAY);
-                DrawRectangle(bar_width * i, GetScreenHeight() - (bar_infected_height + bar_immune_height + bar_dead_height), bar_width, bar_infected_height, PURPLE);
-                DrawRectangle(bar_width * i, GetScreenHeight() - (bar_immune_height + bar_dead_height), bar_width, bar_immune_height, GREEN);
-                DrawRectangle(bar_width * i, GetScreenHeight() - bar_dead_height, bar_width, bar_dead_height, RED);
-            }
-
+            DrawText(msg, 16, 16, 14, WHITE);
         EndDrawing();
     }
 
-    free(infected_count);
-    free(immune_count);
     free(msg);
+    CLEANUP(ofp);
 
     CloseWindow();
     return 0;

@@ -13,30 +13,49 @@ distancing/quarantine measures during outbreaks are good countermeasures
 and delay the rapid spread of infectious disease. 
 Spheres in a box that are not bouncing around are simple enough to show this.
 
-## 1/4 of the population is moving
 
-![1/4 of the population is moving](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/screenshots/4.png)
+## Screenshot of the Simulation
 
-## 1/3 of the population is moving
-
-![1/3 of the population is moving](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/screenshots/3.png)
-
-## 1/2 of the population is moving
-
-![1/2 of the population is moving](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/screenshots/2.png)
-
-## 1/1 of the population is moving
-
-![1/1 of the population is moving](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/screenshots/1.png)
-
-Colors are the following:
-* Gray - Has never come in contact with the disease
-* Purple - Is infected
-* Green - Has recovered and is immune to the disease.
-* Red - Has died
+![Screenshot](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/screenshot.png)
 
 The graph shows every 5 frames the size of these partitions of the total population.
 Default simulation time is 40 seconds and is easily tweakable. Other easily adjustable values
 are window width and height, probability of dying if infected, probability of infecting another
 individual upon contact, the time needed to heal or die, the population size,
 the fraction of people that are moving and the graph sampling rate.
+The simulation outputs CSV data, plotted with gnuplot.
+Thanks to [ix](https://github.com/ix) for very useful improvements to the simulation.
+
+In the examples, population size is 1100:
+
+## 10/1100 people are quarantined
+
+![10/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/10.png)
+
+## 110/1100 people are quarantined
+
+![110/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/110.png)
+
+## 210/1100 people are quarantined
+
+![210/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/210.png)
+
+## 310/1100 people are quarantined
+
+![310/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/310.png)
+
+## 410/1100 people are quarantined
+
+![410/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/410.png)
+
+## 510/1100 people are quarantined
+
+![510/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/510.png)
+
+## 610/1100 people are quarantined
+
+![610/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/610.png)
+
+## 710/1100 people are quarantined
+
+![710/1100 quarantined](https://raw.githubusercontent.com/0x0f0f0f/infectious-disease-toy-simulation/master/examples/710.png)
